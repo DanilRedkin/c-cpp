@@ -1,3 +1,0 @@
-[submodule "suite"]
-	path = suite
-	url = https://github.com/skkv-cpp/suite.git
