@@ -1,0 +1,391 @@
+name: Containers Tests
+
+on:
+  - workflow_dispatch
+  - repository_dispatch
+
+permissions:
+  checks: write
+  actions: read
+  contents: read
+
+env:
+  EXE: __test.exe
+  RESULTS: __results.txt
+
+jobs:
+  clang-format:
+    name: Code formatting check
+
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: jidicula/clang-format-action@v4.11.0
+        with:
+          clang-format-version: '18'
+          check-path: '.'
+
+  ubuntu:
+    needs: clang-format
+
+    name: "Ubuntu: ${{ matrix.toolchain.cc }}-${{ matrix.toolchain.version }} (${{ matrix.profile }} configuration)"
+
+    strategy:
+      fail-fast: false
+
+      matrix:
+        toolchain:
+          - { cc: clang, version: 17 }
+          - { cc: gcc, version: 11 }
+
+        profile:
+          - Release
+          - Debug
+          - AddressSanitized
+          - LeakSanitized
+          - UndefinedBehaviorSanitized
+          - ThreadSanitized
+
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    container:
+      image: wolandkobayashi/educontainer:dev-${{ matrix.toolchain.cc }}${{ matrix.toolchain.version }}
+      options: --privileged
+
+    outputs:
+      tests_ubuntu_clang_Release: ${{ steps.run-tests.outputs.tests_ubuntu_clang_Release }}
+      tests_ubuntu_clang_Debug: ${{ steps.run-tests.outputs.tests_ubuntu_clang_Debug }}
+      tests_ubuntu_clang_AddressSanitized: ${{ steps.run-tests.outputs.tests_ubuntu_clang_AddressSanitized }}
+      tests_ubuntu_clang_LeakSanitized: ${{ steps.run-tests.outputs.tests_ubuntu_clang_LeakSanitized }}
+      tests_ubuntu_clang_UndefinedBehaviorSanitized: ${{ steps.run-tests.outputs.tests_ubuntu_clang_UndefinedBehaviorSanitized }}
+      tests_ubuntu_clang_ThreadSanitized: ${{ steps.run-tests.outputs.tests_ubuntu_clang_ThreadSanitized }}
+      tests_ubuntu_gcc_Release: ${{ steps.run-tests.outputs.tests_ubuntu_gcc_Release }}
+      tests_ubuntu_gcc_Debug: ${{ steps.run-tests.outputs.tests_ubuntu_gcc_Debug }}
+      tests_ubuntu_gcc_AddressSanitized: ${{ steps.run-tests.outputs.tests_ubuntu_gcc_AddressSanitized }}
+      tests_ubuntu_gcc_LeakSanitized: ${{ steps.run-tests.outputs.tests_ubuntu_gcc_LeakSanitized }}
+      tests_ubuntu_gcc_UndefinedBehaviorSanitized: ${{ steps.run-tests.outputs.tests_ubuntu_gcc_UndefinedBehaviorSanitized }}
+      tests_ubuntu_gcc_ThreadSanitized: ${{ steps.run-tests.outputs.tests_ubuntu_gcc_ThreadSanitized }}
+
+      ok_ubuntu_clang_Release: ${{ steps.run-tests.outputs.ok_ubuntu_clang_Release }}
+      ok_ubuntu_clang_Debug: ${{ steps.run-tests.outputs.ok_ubuntu_clang_Debug }}
+      ok_ubuntu_clang_AddressSanitized: ${{ steps.run-tests.outputs.ok_ubuntu_clang_AddressSanitized }}
+      ok_ubuntu_clang_LeakSanitized: ${{ steps.run-tests.outputs.ok_ubuntu_clang_LeakSanitized }}
+      ok_ubuntu_clang_UndefinedBehaviorSanitized: ${{ steps.run-tests.outputs.ok_ubuntu_clang_UndefinedBehaviorSanitized }}
+      ok_ubuntu_clang_ThreadSanitized: ${{ steps.run-tests.outputs.ok_ubuntu_clang_ThreadSanitized }}
+      ok_ubuntu_gcc_Release: ${{ steps.run-tests.outputs.ok_ubuntu_gcc_Release }}
+      ok_ubuntu_gcc_Debug: ${{ steps.run-tests.outputs.ok_ubuntu_gcc_Debug }}
+      ok_ubuntu_gcc_AddressSanitized: ${{ steps.run-tests.outputs.ok_ubuntu_gcc_AddressSanitized }}
+      ok_ubuntu_gcc_LeakSanitized: ${{ steps.run-tests.outputs.ok_ubuntu_gcc_LeakSanitized }}
+      ok_ubuntu_gcc_UndefinedBehaviorSanitized: ${{ steps.run-tests.outputs.ok_ubuntu_gcc_UndefinedBehaviorSanitized }}
+      ok_ubuntu_gcc_ThreadSanitized: ${{ steps.run-tests.outputs.ok_ubuntu_gcc_ThreadSanitized }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 'main'
+          submodules: true
+  
+      - name: Setup working directory
+        run: |
+          cp *.cpp /student/ 2>/dev/null || :
+          cp *.h /student/ 2>/dev/null || :
+          cp *.hpp /student/ 2>/dev/null || :
+
+      - name: Fixup sanitizers
+        run: sysctl vm.mmap_rnd_bits=28
+
+      - name: Build
+        run: python3 compile.py --name=${{ env.EXE }} --use-profile=${{ matrix.profile }} --std=c++20 --include-libraries=GoogleTest --link-libraries=gtest
+        working-directory: /student
+
+      - name: Run tests
+        id: run-tests
+        shell: bash
+        env:
+          COMPILER: ${{ matrix.toolchain.cc }}
+          VERSION: ${{ matrix.profile }}
+        run: |
+          EXIT_CODE=0
+          ./${{ env.EXE }} ${{ env.RESULTS }} || EXIT_CODE=$?
+
+          if test -f ${{ env.RESULTS }}
+          then
+            RESULT_SUM="$(cat ${{ env.RESULTS }})"
+          else
+            RESULT_SUM=0
+          fi
+
+          echo "tests_ubuntu_${COMPILER}_${VERSION}=${RESULT_SUM}" >> "$GITHUB_OUTPUT"
+          echo "tests_ubuntu_${COMPILER}_${VERSION} => ${RESULT_SUM}"
+
+          echo "ok_ubuntu_${COMPILER}_${VERSION}=${EXIT_CODE}" >> "$GITHUB_OUTPUT"
+          echo "ok_ubuntu_${COMPILER}_${VERSION} => ${EXIT_CODE}"
+
+          exit $EXIT_CODE
+        working-directory: /student
+
+  windows:
+    needs: ubuntu
+    if: ${{ always() }}
+
+    name: "Windows: ${{ matrix.toolchain.cc }}-${{ matrix.toolchain.version }} (${{ matrix.profile }} configuration)"
+
+    strategy:
+      fail-fast: false
+
+      matrix:
+        toolchain:
+          - { cc: msvc, version: 17 }
+
+        profile:
+          - Release
+          - Debug
+          - AddressSanitized
+
+    runs-on: windows-2019
+
+    outputs:
+      tests_windows_Release: ${{ steps.run-tests.outputs.tests_windows_Release }}
+      tests_windows_Debug: ${{ steps.run-tests.outputs.tests_windows_Debug }}
+      tests_windows_AddressSanitized: ${{ steps.run-tests.outputs.tests_windows_AddressSanitized }}
+
+      ok_windows_Release: ${{ steps.run-tests.outputs.ok_windows_Release }}
+      ok_windows_Debug: ${{ steps.run-tests.outputs.ok_windows_Debug }}
+      ok_windows_AddressSanitized: ${{ steps.run-tests.outputs.ok_windows_AddressSanitized }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 'main'
+          submodules: true
+
+      - name: Download scripts
+        uses: actions/checkout@v4
+        with:
+          repository: 'sfbakturin/edu-containers'
+          ref: 'dev'
+          path: 'scripts'
+
+      - name: Install Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install requirements
+        run: pip install pyyaml
+
+      - name: Setup workbench
+        run: |
+          cp scripts/compiler/compile.py .
+          mkdir .compileconfig
+          cp scripts/compiler/.compileconfig/googletest.yml .compileconfig/
+
+      - name: Install GoogleTest (Release)
+        if: ${{ matrix.profile == 'Release' }}
+        env:
+          EDUCONTAINER_GOOGLETEST: 'C:/SDK/googletest'
+          EDUCONTAINER_BUILDTYPE: 'Release'
+        run: powershell scripts/windows/installers/install-gtest.ps1 ${{ env.EDUCONTAINER_BUILDTYPE }}
+
+      - name: Install GoogleTest (Debug/AddressSanitized)
+        if: ${{ matrix.profile != 'Release' }}
+        env:
+          EDUCONTAINER_GOOGLETEST: 'C:/SDK/googletest'
+          EDUCONTAINER_BUILDTYPE: 'Debug'
+        run: powershell scripts/windows/installers/install-gtest.ps1 ${{ env.EDUCONTAINER_BUILDTYPE }}
+
+      - name: Build
+        env:
+          EDUCONTAINER_TARGET_SYSTEM: windows
+          EDUCONTAINER_TARGET_NAME: msvc
+          EDUCONTAINER_MSVC_SETUP: 'C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise\VC\Auxiliary\Build\vcvars64.bat'
+          EDUCONTAINER_GOOGLETEST: 'C:/SDK/googletest'
+          EDUCONTAINER_GOOGLETEST_INCLUDE: 'C:/SDK/googletest/include'
+          EDUCONTAINER_GOOGLETEST_LIBRARY: 'C:/SDK/googletest/lib'
+        run: python compile.py --name=${{ env.EXE }} --use-profile=${{ matrix.profile }} --std=c++20 --include-libraries=GoogleTest --link-libraries=gtest.lib
+
+      - name: Run tests
+        id: run-tests
+        shell: bash
+        env:
+          VERSION: ${{ matrix.profile }}
+        run: |
+          EXIT_CODE=0
+          ./${{ env.EXE }} ${{ env.RESULTS }} || EXIT_CODE=$?
+
+          if test -f ${{ env.RESULTS }}
+          then
+            RESULT_SUM="$(cat ${{ env.RESULTS }})"
+          else
+            RESULT_SUM=0
+          fi
+
+          echo "tests_windows_${VERSION}=${RESULT_SUM}" >> "$GITHUB_OUTPUT"
+          echo "tests_windows_${VERSION} => ${RESULT_SUM}"
+
+          echo "ok_windows_${VERSION}=${EXIT_CODE}" >> "$GITHUB_OUTPUT"
+          echo "ok_windows_${VERSION} => ${EXIT_CODE}"
+
+          exit $EXIT_CODE
+
+  results:
+    needs: [windows, ubuntu]
+    if: ${{ always() }}
+
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Generating report
+        shell: bash
+        env:
+          X01: ${{ needs.ubuntu.outputs.tests_ubuntu_clang_Release }}
+          X02: ${{ needs.ubuntu.outputs.tests_ubuntu_clang_Debug }}
+          X03: ${{ needs.ubuntu.outputs.tests_ubuntu_clang_AddressSanitized }}
+          X04: ${{ needs.ubuntu.outputs.tests_ubuntu_clang_LeakSanitized }}
+          X05: ${{ needs.ubuntu.outputs.tests_ubuntu_clang_UndefinedBehaviorSanitized }}
+          X06: ${{ needs.ubuntu.outputs.tests_ubuntu_clang_ThreadSanitized }}
+          X07: ${{ needs.ubuntu.outputs.tests_ubuntu_gcc_Release }}
+          X08: ${{ needs.ubuntu.outputs.tests_ubuntu_gcc_Debug }}
+          X09: ${{ needs.ubuntu.outputs.tests_ubuntu_gcc_AddressSanitized }}
+          X10: ${{ needs.ubuntu.outputs.tests_ubuntu_gcc_LeakSanitized }}
+          X11: ${{ needs.ubuntu.outputs.tests_ubuntu_gcc_UndefinedBehaviorSanitized }}
+          X12: ${{ needs.ubuntu.outputs.tests_ubuntu_gcc_ThreadSanitized }}
+          X13: ${{ needs.windows.outputs.tests_windows_Release }}
+          X14: ${{ needs.windows.outputs.tests_windows_Debug }}
+          X15: ${{ needs.windows.outputs.tests_windows_AddressSanitized }}
+
+          UBUNTU_CLANG_Release: ${{ needs.ubuntu.outputs.ok_ubuntu_clang_Release }}
+          UBUNTU_CLANG_Debug: ${{ needs.ubuntu.outputs.ok_ubuntu_clang_Debug }}
+          UBUNTU_CLANG_AddressSanitized: ${{ needs.ubuntu.outputs.ok_ubuntu_clang_AddressSanitized }}
+          UBUNTU_CLANG_LeakSanitized: ${{ needs.ubuntu.outputs.ok_ubuntu_clang_LeakSanitized }}
+          UBUNTU_CLANG_UndefinedBehaviorSanitized: ${{ needs.ubuntu.outputs.ok_ubuntu_clang_UndefinedBehaviorSanitized }}
+          UBUNTU_CLANG_ThreadSanitized: ${{ needs.ubuntu.outputs.ok_ubuntu_clang_ThreadSanitized }}
+          UBUNTU_GCC_Release: ${{ needs.ubuntu.outputs.ok_ubuntu_gcc_Release }}
+          UBUNTU_GCC_Debug: ${{ needs.ubuntu.outputs.ok_ubuntu_gcc_Debug }}
+          UBUNTU_GCC_AddressSanitized: ${{ needs.ubuntu.outputs.ok_ubuntu_gcc_AddressSanitized }}
+          UBUNTU_GCC_LeakSanitized: ${{ needs.ubuntu.outputs.ok_ubuntu_gcc_LeakSanitized }}
+          UBUNTU_GCC_UndefinedBehaviorSanitized: ${{ needs.ubuntu.outputs.ok_ubuntu_gcc_UndefinedBehaviorSanitized }}
+          UBUNTU_GCC_ThreadSanitized: ${{ needs.ubuntu.outputs.ok_ubuntu_gcc_ThreadSanitized }}
+
+          WINDOWS_Release: ${{ needs.windows.outputs.ok_windows_Release }}
+          WINDOWS_Debug: ${{ needs.windows.outputs.ok_windows_Debug }}
+          WINDOWS_AddressSanitized: ${{ needs.windows.outputs.ok_windows_AddressSanitized }}
+        run: |
+          echo "# The Containers Testing" >> $GITHUB_STEP_SUMMARY
+          echo "Student: **@${{ github.actor }}**" >> $GITHUB_STEP_SUMMARY
+
+          X=$(printf "%s\n" "${X01}" "${X02}" "${X03}" "${X04}" "${X05}" "${X06}" "${X07}" "${X08}" "${X09}" "${X10}" "${X11}" "${X12}" "${X13}" "${X14}" "${X15}" | sort -n -r | head -1)
+          Y=$(printf "%s\n" "${X01}" "${X02}" "${X03}" "${X04}" "${X05}" "${X06}" "${X07}" "${X08}" "${X09}" "${X10}" "${X11}" "${X12}" "${X13}" "${X14}" "${X15}" | grep "${X}" | uniq -c | awk '{print $1}')
+
+          export Y
+          Y_NORM=$(perl -e 'print($ENV{Y} / 15)')
+
+          echo "Final result: **\`${Y_NORM},${X}\`**" >> $GITHUB_STEP_SUMMARY
+
+          echo "## Testing suites" >> $GITHUB_STEP_SUMMARY
+          
+          if [ $UBUNTU_CLANG_Release -eq 0 ]
+          then
+            echo "Ubuntu (Clang/Release) is **OK**" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "Ubuntu (Clang/Release) is **FAILED**" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          if [ $UBUNTU_CLANG_Debug -eq 0 ]
+          then
+            echo "Ubuntu (Clang/Debug) is **OK**" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "Ubuntu (Clang/Debug) is **FAILED**" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          if [ $UBUNTU_CLANG_AddressSanitized -eq 0 ]
+          then
+            echo "Ubuntu (Clang/AddressSanitized) is **OK**" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "Ubuntu (Clang/AddressSanitized) is **FAILED**" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          if [ $UBUNTU_CLANG_LeakSanitized -eq 0 ]
+          then
+            echo "Ubuntu (Clang/LeakSanitized) is **OK**" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "Ubuntu (Clang/LeakSanitized) is **FAILED**" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          if [ $UBUNTU_CLANG_UndefinedBehaviorSanitized -eq 0 ]
+          then
+            echo "Ubuntu (Clang/UndefinedBehaviorSanitized) is **OK**" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "Ubuntu (Clang/UndefinedBehaviorSanitized) is **FAILED**" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          if [ $UBUNTU_CLANG_ThreadSanitized -eq 0 ]
+          then
+            echo "Ubuntu (Clang/ThreadSanitized) is **OK**" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "Ubuntu (Clang/ThreadSanitized) is **FAILED**" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          if [ $UBUNTU_GCC_Release -eq 0 ]
+          then
+            echo "Ubuntu (GCC/Release) is **OK**" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "Ubuntu (GCC/Release) is **FAILED**" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          if [ $UBUNTU_GCC_Debug -eq 0 ]
+          then
+            echo "Ubuntu (GCC/Debug) is **OK**" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "Ubuntu (GCC/Debug) is **FAILED**" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          if [ $UBUNTU_GCC_AddressSanitized -eq 0 ]
+          then
+            echo "Ubuntu (GCC/AddressSanitized) is **OK**" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "Ubuntu (GCC/AddressSanitized) is **FAILED**" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          if [ $UBUNTU_GCC_LeakSanitized -eq 0 ]
+          then
+            echo "Ubuntu (GCC/LeakSanitized) is **OK**" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "Ubuntu (GCC/LeakSanitized) is **FAILED**" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          if [ $UBUNTU_GCC_UndefinedBehaviorSanitized -eq 0 ]
+          then
+            echo "Ubuntu (GCC/UndefinedBehaviorSanitized) is **OK**" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "Ubuntu (GCC/UndefinedBehaviorSanitized) is **FAILED**" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          if [ $UBUNTU_GCC_ThreadSanitized -eq 0 ]
+          then
+            echo "Ubuntu (GCC/ThreadSanitized) is **OK**" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "Ubuntu (GCC/ThreadSanitized) is **FAILED**" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          if [ $WINDOWS_Release -eq 0 ]
+          then
+            echo "Windows (Release) is **OK**" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "Windows (Release) is **FAILED**" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          if [ $WINDOWS_Debug -eq 0 ]
+          then
+            echo "Windows (Debug) is **OK**" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "Windows (Debug) is **FAILED**" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          if [ $WINDOWS_AddressSanitized -eq 0 ]
+          then
+            echo "Windows (AddressSanitized) is **OK**" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "Windows (AddressSanitized) is **FAILED**" >> $GITHUB_STEP_SUMMARY
+          fi

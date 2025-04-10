@@ -1,0 +1,146 @@
+name: Floating Tests
+
+on:
+  - workflow_dispatch
+  - repository_dispatch
+
+permissions:
+  checks: write
+  actions: read
+  contents: read
+
+env:
+  EXE: __test.exe
+
+jobs:
+  clang-format:
+    name: Code formatting check
+
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: jidicula/clang-format-action@v4.11.0
+        with:
+          clang-format-version: '18'
+          check-path: '.'
+
+  ubuntu:
+    needs: clang-format
+
+    name: "Ubuntu: ${{ matrix.toolchain.cc }}-${{ matrix.toolchain.version }} (${{ matrix.profile }} configuration)"
+
+    strategy:
+      fail-fast: false
+
+      matrix:
+        toolchain:
+          - { cc: clang, version: 17 }
+          - { cc: gcc, version: 11 }
+
+        profile:
+          - Release
+          - Debug
+          - AddressSanitized
+          - LeakSanitized
+          - UndefinedBehaviorSanitized
+          - ThreadSanitized
+          - MemorySanitized
+
+        exclude:
+          # There is no MemorySanitizer on GCC.
+          - toolchain: { cc: gcc }
+            profile: MemorySanitized
+
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    container:
+      image: wolandkobayashi/educontainer:dev-${{ matrix.toolchain.cc }}${{ matrix.toolchain.version }}
+      options: --privileged
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 'main'
+          submodules: true
+
+      - name: Install requirements
+        run: pip3 install -r suite/requirements.txt
+  
+      - name: Setup working directory
+        run: |
+          mkdir /student/suite/
+          cp tests.py /student/
+          cp suite/*.py /student/suite/
+  
+          cp *.c /student/ 2>/dev/null || :
+          cp *.h /student/ 2>/dev/null || :
+          mkdir -p src/ include/ /student/src/ /student/include/
+          cp src/*.c /student/src/ 2>/dev/null || :
+          cp include/*.h /student/include/ 2>/dev/null || :
+
+      - name: Fixup sanitizers
+        run: sysctl vm.mmap_rnd_bits=28
+
+      - name: Build
+        run: python3 compile.py --name=${{ env.EXE }} --use-profile=${{ matrix.profile }} --std=c17
+        working-directory: /student
+
+      - name: Run tests
+        run: python3 tests.py ${{ env.EXE }}
+        working-directory: /student
+
+  windows:
+    needs: ubuntu
+
+    name: "Windows: ${{ matrix.toolchain.cc }}-${{ matrix.toolchain.version }} (${{ matrix.profile }} configuration)"
+
+    strategy:
+      fail-fast: false
+
+      matrix:
+        toolchain:
+          - { cc: msvc, version: 17 }
+
+        profile:
+          - Release
+          - Debug
+          - AddressSanitized
+
+    runs-on: windows-2019
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 'main'
+          submodules: true
+
+      - name: Download scripts
+        uses: actions/checkout@v4
+        with:
+          repository: 'sfbakturin/edu-containers'
+          ref: 'dev'
+          path: 'scripts'
+
+      - name: Install Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install requirements
+        run: |
+          pip install -r suite/requirements.txt
+          pip install pyyaml
+
+      - name: Setup workbench
+        run: cp scripts/compiler/compile.py .
+
+      - name: Build
+        env:
+          EDUCONTAINER_TARGET_SYSTEM: windows
+          EDUCONTAINER_TARGET_NAME: msvc
+          EDUCONTAINER_MSVC_SETUP: 'C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise\VC\Auxiliary\Build\vcvars64.bat'
+        run: python compile.py --name=${{ env.EXE }} --use-profile=${{ matrix.profile }} --std=c17
+
+      - name: Run tests
+        run: python tests.py ${{ env.EXE }}
