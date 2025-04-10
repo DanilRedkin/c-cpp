@@ -1,0 +1,6 @@
+<RCC>
+    <qresource prefix="/">
+        <file>minesweeper_fr.qm</file>
+        <file>minesweeper_en.qm</file>
+    </qresource>
+</RCC>

@@ -1,0 +1,9 @@
+# Auto detect text files and perform LF normalization
+* text=auto eol=lf
+
+*.png binary
+*.pnm binary
+*.pgm binary
+*.ppm binary
+
+*.mp3 binary
